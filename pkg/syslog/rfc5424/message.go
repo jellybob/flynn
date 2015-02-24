@@ -24,7 +24,10 @@ func NewMessage(hdr *Header, msg []byte) *Message {
 		hdr.Timestamp = time.Now().UTC()
 	}
 
-	return &Message{Header: *hdr, Msg: msg}
+	m := make([]byte, len(msg))
+	copy(m, msg)
+
+	return &Message{Header: *hdr, Msg: m}
 }
 
 var msgSep = []byte{' '}
