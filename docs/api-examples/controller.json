@@ -64,6 +64,22 @@
 			"body": "{\"id\":\"7406a4d71a0c43d3ac4b39f006cb0342\",\"name\":\"my-app-1422557606845347930\",\"protected\":false,\"strategy\":\"all-at-once\",\"created_at\":\"2015-01-29T18:53:26.845896Z\",\"updated_at\":\"2015-01-29T18:53:26.845896Z\"}"
 		}
 	},
+	"app_log": {
+		"request": {
+			"method": "GET",
+			"url": "/apps/7406a4d71a0c43d3ac4b39f006cb0342/log?wait=true",
+			"headers": {
+				"Authorization": "Basic OnMzY3IzdA==",
+				"Content-Type": "application/json"
+			}
+		},
+		"response": {
+			"headers": {
+				"Content-Type": "text/plain"
+			},
+			"body": "\u0000\u0003\u0001\u0000\u0000\u0000\u0000\u0003\u0002\u0000\u0000\u0000\u0000"
+		}
+	},
 	"app_initial_release_get": {
 		"request": {
 			"method": "GET",

@@ -267,6 +267,52 @@ func (c *Client) GetApp(appID string) (*ct.App, error) {
 	return app, c.Get(fmt.Sprintf("/apps/%s", appID), app)
 }
 
+// GetAppLog returns a ReadCloser log stream of the app with ID appID. If lines is
+// above zero, the number of lines returned will be capped at that value.
+// Otherwise, all available logs are returned. If follow is true, new log lines
+// are streamed after the buffered log.
+func (c *Client) GetAppLog(appID string, lines int, follow bool) (io.ReadCloser, error) {
+	path := fmt.Sprintf("/apps/%s/log", appID)
+	query := url.Values{}
+	if lines > 0 {
+		query.Add("lines", strconv.Itoa(lines))
+	}
+	if follow {
+		query.Add("follow", "true")
+	}
+	if encodedQuery := query.Encode(); encodedQuery != "" {
+		path = fmt.Sprintf("%s?%s", path, encodedQuery)
+	}
+	res, err := c.RawReq("GET", path, nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return res.Body, nil
+}
+
+// GetAppLogWithWait is just like GetAppLog, except that it will wait for a
+// non-existent log stream to be created rather than simply returning empty
+// results.
+func (c *Client) GetAppLogWithWait(appID string, lines int, follow bool) (io.ReadCloser, error) {
+	path := fmt.Sprintf("/apps/%s/log", appID)
+	query := url.Values{}
+	query.Add("wait", "true")
+	if lines > 0 {
+		query.Add("lines", strconv.Itoa(lines))
+	}
+	if follow {
+		query.Add("follow", "true")
+	}
+	if encodedQuery := query.Encode(); encodedQuery != "" {
+		path = fmt.Sprintf("%s?%s", path, encodedQuery)
+	}
+	res, err := c.RawReq("GET", path, nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return res.Body, nil
+}
+
 // GetDeployment returns a deployment queued on the deployer.
 func (c *Client) GetDeployment(deploymentID string) (*ct.Deployment, error) {
 	res := &ct.Deployment{}
