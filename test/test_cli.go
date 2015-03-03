@@ -246,7 +246,7 @@ func (s *CLISuite) TestRun(t *c.C) {
 	id := strings.TrimSpace(detached.Output)
 	_, jobID := app.waitFor(jobEvents{"": {"up": 1, "down": 1}})
 	t.Assert(jobID, c.Equals, id)
-	t.Assert(app.flynn("log", id), Outputs, "hello\n")
+	t.Assert(app.flynn("log"), Outputs, "hello\n")
 
 	// test stdin and stderr
 	streams := app.flynnCmd("run", "sh", "-c", "cat 1>&2")
@@ -388,20 +388,20 @@ func (s *CLISuite) TestResource(t *c.C) {
 func (s *CLISuite) TestLog(t *c.C) {
 	app := s.newCliTestApp(t)
 	t.Assert(app.sh("echo -n hello world"), Succeeds)
-	_, jobID := app.waitFor(jobEvents{"": {"up": 1, "down": 1}})
-	t.Assert(app.flynn("log", jobID), Outputs, "hello world")
+	app.waitFor(jobEvents{"": {"up": 1, "down": 1}})
+	t.Assert(app.flynn("log"), Outputs, "hello world")
 }
 
 func (s *CLISuite) TestLogStderr(t *c.C) {
 	app := s.newCliTestApp(t)
 	t.Assert(app.sh("echo -n hello; echo -n world >&2"), Succeeds)
-	_, jobID := app.waitFor(jobEvents{"": {"up": 1, "down": 1}})
+	app.waitFor(jobEvents{"": {"up": 1, "down": 1}})
 	runLog := func(split bool) (stdout, stderr bytes.Buffer) {
 		args := []string{"log"}
 		if split {
 			args = append(args, "--split-stderr")
 		}
-		args = append(args, jobID)
+		args = append(args)
 		log := app.flynnCmd(args...)
 		log.Stdout = &stdout
 		log.Stderr = &stderr
@@ -427,10 +427,10 @@ func (s *CLISuite) TestLogFollow(t *c.C) {
 	jobStdin, err := job.StdinPipe()
 	t.Assert(err, c.IsNil)
 	t.Assert(job.Start(), c.IsNil)
-	_, jobID := app.waitFor(jobEvents{"": {"up": 1}})
+	app.waitFor(jobEvents{"": {"up": 1}})
 	defer jobStdin.Close()
 
-	log := app.flynnCmd("log", "--follow", jobID)
+	log := app.flynnCmd("log", "--follow")
 	logStdout, err := log.StdoutPipe()
 	t.Assert(err, c.IsNil)
 	t.Assert(log.Start(), c.IsNil)
@@ -551,8 +551,8 @@ func (s *CLISuite) TestRelease(t *c.C) {
 	t.Assert(r.Processes, c.DeepEquals, release.Processes)
 
 	t.Assert(app.flynn("scale", "--no-wait", "env=1"), Succeeds)
-	_, jobID := app.waitFor(jobEvents{"env": {"up": 1}})
-	envLog := app.flynn("log", jobID)
+	app.waitFor(jobEvents{"env": {"up": 1}})
+	envLog := app.flynn("log")
 	t.Assert(envLog, Succeeds)
 	t.Assert(envLog, OutputContains, "GLOBAL=FOO")
 	t.Assert(envLog, OutputContains, "ENV_ONLY=BAZ")
