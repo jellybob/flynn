@@ -43,30 +43,6 @@ func (s *S) TearDownSuite(c *C) {
 	s.cleanup()
 }
 
-func (s *S) TestSetup(c *C) {
-	lm := New(100)
-	if err := lm.Run(s.discd); err == nil {
-		c.Fatal("logmux setup before logaggregator leader available")
-	}
-
-	l, err := net.Listen("tcp", ":0")
-	if err != nil {
-		c.Fatal(err)
-	}
-	defer l.Close()
-
-	addr := l.Addr().String()
-	hb, err := s.discd.AddServiceAndRegister("logaggregator", addr)
-	if err != nil {
-		c.Fatal(err)
-	}
-	defer hb.Close()
-
-	if err := lm.Run(s.discd); err != nil {
-		c.Errorf("logmux setup error: %s", err)
-	}
-}
-
 func (s *S) TestLogMux(c *C) {
 	l, err := net.Listen("tcp", ":0")
 	if err != nil {
@@ -97,9 +73,7 @@ func (s *S) TestLogMux(c *C) {
 	go runServer(l, handler)
 
 	lm := New(10000)
-	if err := lm.Run(s.discd); err != nil {
-		c.Fatal(err)
-	}
+	lm.Run(s.discd)
 
 	config := Config{
 		AppName: "test",
@@ -152,19 +126,10 @@ func (s *S) TestLIFOBuffer(c *C) {
 
 	go runServer(l, handler)
 
+	lm := New(n)
 	addr := l.Addr().String()
 	hb := discoverdRegister(c, s.discd, "logaggregator", addr)
-
-	// pause drainer so that messages buffer
-	pausec := make(chan struct{})
-	drainHook = func() { <-pausec }
-
-	lm := New(n)
-	if err := lm.Run(s.discd); err != nil {
-		c.Fatal(err)
-	}
-
-	hb.Close()
+	defer hb.Close()
 
 	config := Config{
 		AppName: "test",
@@ -184,7 +149,7 @@ func (s *S) TestLIFOBuffer(c *C) {
 	}
 	pw.Close()
 
-	close(pausec)
+	lm.Run(s.discd)
 	<-srvDone
 }
 

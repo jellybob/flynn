@@ -263,9 +263,7 @@ func runDaemon(args *docopt.Args) {
 	}
 	shutdown.BeforeExit(func() { hb.Close() })
 
-	if err := mux.Run(disc); err != nil {
-		shutdown.Fatal(err)
-	}
+	mux.Run(disc)
 	shutdown.BeforeExit(func() { mux.Close() })
 
 	cluster, err := cluster.NewClient()

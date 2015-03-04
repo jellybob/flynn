@@ -9,6 +9,7 @@ import (
 
 	"github.com/flynn/flynn/Godeps/_workspace/src/github.com/technoweenie/grohl"
 	"github.com/flynn/flynn/discoverd/client"
+	"github.com/flynn/flynn/pkg/stream"
 	"github.com/flynn/flynn/pkg/syslog/rfc5424"
 	"github.com/flynn/flynn/pkg/syslog/rfc6587"
 )
@@ -34,70 +35,34 @@ func New(bufferSize int) *LogMux {
 	}
 }
 
-func (m *LogMux) Run(discd *discoverd.Client) error {
-	conn, err := dialService(discd)
-	if err != nil {
-		return err
-	}
-
-	go m.drain(discd, conn)
-	return nil
+func (m *LogMux) Run(discd *discoverd.Client) {
+	go m.drainTo(m.serviceConn(discd))
 }
 
 var drainHook func()
 
-func (m *LogMux) drain(discd *discoverd.Client, conn net.Conn) {
-	g := grohl.NewContext(grohl.Data{"at": "logmux_drain"})
-	eventc := make(chan *discoverd.Event)
-
+func (m *LogMux) drainTo(conn io.Writer) {
 	defer close(m.donec)
+
+	g := grohl.NewContext(grohl.Data{"at": "logmux_drain"})
 
 	if drainHook != nil {
 		drainHook()
 	}
 
-	var err error
 	for {
-		select {
-		case msg, ok := <-m.logc:
-			if !ok {
-				if err := conn.Close(); err != nil {
-					g.Log(grohl.Data{"status": "error", "err": err.Error()})
-				}
-				return
-			}
+		msg, ok := <-m.logc
+		if !ok {
+			// shutdown
+			return
+		}
 
-			if _, err = conn.Write(rfc6587.Bytes(msg)); err != nil {
-				g.Log(grohl.Data{"status": "error", "err": err.Error()})
-			}
-		case event := <-eventc:
-			g.Log(grohl.Data{"event": event.Kind.String()})
-
-			switch event.Kind {
-			case discoverd.EventKindLeader:
-				if conn.Close(); err != nil {
-					g.Log(grohl.Data{"status": "error", "err": err.Error()})
-				}
-
-				if conn, err = dialService(discd); err != nil {
-					// TODO(benburkert): recover from dial failure
-					panic(err)
-				}
-			default:
-				// TODO(benburkert): handle service up/down transition
-			}
+		_, err := conn.Write(rfc6587.Bytes(msg))
+		if err != nil {
+			g.Log(grohl.Data{"status": "error", "err": err.Error()})
+			break
 		}
 	}
-}
-
-func dialService(discd *discoverd.Client) (net.Conn, error) {
-	srv := discd.Service("logaggregator")
-	ldr, err := srv.Leader()
-	if err != nil {
-		return nil, err
-	}
-
-	return net.Dial("tcp", ldr.Addr)
 }
 
 // Close blocks until all producers have finished, then terminates the drainer,
@@ -157,4 +122,112 @@ func (m *LogMux) follow(r io.Reader, hdr *rfc5424.Header) {
 			// throw away msg if logc buffer is full
 		}
 	}
+}
+
+func (m *LogMux) serviceConn(discd *discoverd.Client) io.Writer {
+	srv := discd.Service("logaggregator")
+	cc := &condConn{
+		cond: &sync.Cond{L: &sync.Mutex{}},
+	}
+
+	go watchService(srv, cc, m.donec)
+
+	return cc
+}
+
+func watchService(srv discoverd.Service, cc *condConn, donec <-chan struct{}) {
+	g := grohl.NewContext(grohl.Data{"at": "logmux_service_watch"})
+	eventc := make(chan *discoverd.Event)
+
+	var (
+		err    error
+		stream stream.Stream
+	)
+
+	if stream, err = srv.Watch(eventc); err != nil {
+		panic(err)
+	}
+
+	for {
+		select {
+		case event, ok := <-eventc:
+			if !ok {
+				// TODO(benburkert): watch closed, rewatch??
+				return
+			}
+
+			switch event.Kind {
+			case discoverd.EventKindLeader:
+				if conn := cc.Reset(); conn != nil {
+					if err = conn.Close(); err != nil {
+						g.Log(grohl.Data{"status": "error", "err": err.Error()})
+					}
+				}
+
+				ldr, err := srv.Leader()
+				if err != nil {
+					panic(err)
+					g.Log(grohl.Data{"status": "error", "err": err.Error()})
+					break
+				}
+
+				conn, err := net.Dial("tcp", ldr.Addr)
+				if err != nil {
+					g.Log(grohl.Data{"status": "error", "err": err.Error()})
+					break
+				}
+
+				cc.Set(conn)
+			case discoverd.EventKindDown:
+				if conn := cc.Reset(); conn != nil {
+					if err = conn.Close(); err != nil {
+						g.Log(grohl.Data{"status": "error", "err": err.Error()})
+					}
+				}
+			default:
+			}
+		case <-donec:
+			if err = stream.Close(); err != nil {
+				g.Log(grohl.Data{"status": "error", "err": err.Error()})
+			}
+
+			if conn := cc.Reset(); conn != nil {
+				if err = conn.Close(); err != nil {
+					g.Log(grohl.Data{"status": "error", "err": err.Error()})
+				}
+			}
+			return
+		}
+	}
+}
+
+type condConn struct {
+	net.Conn
+	cond *sync.Cond
+}
+
+func (c *condConn) Reset() net.Conn {
+	c.cond.L.Lock()
+	conn := c.Conn
+	c.Conn = nil
+	c.cond.L.Unlock()
+
+	return conn
+}
+
+func (c *condConn) Set(conn net.Conn) {
+	c.cond.L.Lock()
+	c.Conn = conn
+	c.cond.L.Unlock()
+	c.cond.Signal()
+}
+
+func (c *condConn) Write(p []byte) (int, error) {
+	c.cond.L.Lock()
+	for c.Conn == nil {
+		c.cond.Wait()
+	}
+
+	defer c.cond.L.Unlock()
+	return c.Conn.Write(p)
 }
